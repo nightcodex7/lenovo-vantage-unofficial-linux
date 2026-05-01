@@ -1,0 +1,13 @@
+[Unit]
+Description=Lenovo Vantage Linux Daemon
+After=dbus.service
+
+[Service]
+Type=dbus
+BusName=org.lenovo.Vantage
+ExecStart=/usr/lib/vantage/daemon/vantaged.py
+User=root
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
