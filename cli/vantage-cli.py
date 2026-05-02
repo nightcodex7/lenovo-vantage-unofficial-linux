@@ -2,6 +2,7 @@
 import sys
 import argparse
 import dbus
+import json
 
 def get_service():
     try:
@@ -13,8 +14,26 @@ def get_service():
         print("Is the vantaged service running?", file=sys.stderr)
         sys.exit(1)
 
+def dbus_to_py(obj):
+    if isinstance(obj, dbus.Dictionary):
+        return {str(k): dbus_to_py(v) for k, v in obj.items()}
+    elif isinstance(obj, dbus.Array):
+        return [dbus_to_py(v) for v in obj]
+    elif isinstance(obj, dbus.String):
+        return str(obj)
+    elif isinstance(obj, dbus.Boolean):
+        return bool(obj)
+    elif isinstance(obj, (dbus.Int32, dbus.Int64, dbus.UInt32, dbus.UInt64, dbus.Byte)):
+        return int(obj)
+    elif isinstance(obj, dbus.Double):
+        return float(obj)
+    return obj
+
 def main():
     parser = argparse.ArgumentParser(description="Lenovo Vantage CLI")
+    parser.add_argument("--json", "-j", action="store_true", help="Output in JSON format")
+    parser.add_argument("--version", "-v", action="version", version="%(prog)s 1.0.0")
+    
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # Power Mode
@@ -43,9 +62,9 @@ def main():
 
     # TDP
     tdp_parser = subparsers.add_parser("tdp", help="Set Ryzen CPU TDP via ryzenadj")
-    tdp_parser.add_argument("stapm", type=int, help="STAPM Limit in mW")
-    tdp_parser.add_argument("fast", type=int, help="Fast Limit in mW")
-    tdp_parser.add_argument("slow", type=int, help="Slow Limit in mW")
+    tdp_parser.add_argument("--stapm", type=int, required=True, help="STAPM Limit in mW (e.g. 45000 = 45 W)")
+    tdp_parser.add_argument("--fast", type=int, required=True, help="Fast Limit in mW")
+    tdp_parser.add_argument("--slow", type=int, required=True, help="Slow Limit in mW")
 
     # Sensors
     subparsers.add_parser("sensors", help="Show sensor data")
@@ -79,60 +98,90 @@ def main():
     if args.command == "power":
         if args.mode:
             svc.SetPowerMode(args.mode)
+            if args.json: print(json.dumps({"status": "success", "power_mode": args.mode}))
         else:
-            print(svc.GetPowerMode())
+            mode = str(svc.GetPowerMode())
+            if args.json: print(json.dumps({"power_mode": mode}))
+            else: print(mode.capitalize())
 
     elif args.command == "fan":
         if args.mode:
             svc.SetFanMode(args.mode)
+            if args.json: print(json.dumps({"status": "success", "fan_mode": args.mode}))
         else:
-            print(svc.GetFanMode())
+            mode = str(svc.GetFanMode())
+            if args.json: print(json.dumps({"fan_mode": mode}))
+            else: print(mode.replace("_", " ").title())
 
     elif args.command == "battery":
         if args.state:
-            svc.SetConservation(args.state == "on")
+            state_bool = args.state == "on"
+            svc.SetConservation(state_bool)
+            if args.json: print(json.dumps({"status": "success", "conservation": state_bool}))
         else:
-            print("On" if svc.GetConservation() else "Off")
+            state = bool(svc.GetConservation())
+            if args.json: print(json.dumps({"conservation": state}))
+            else: print("On" if state else "Off")
 
     elif args.command == "usb":
         if args.state:
-            svc.SetUsbCharging(args.state == "on")
+            state_bool = args.state == "on"
+            svc.SetUsbCharging(state_bool)
+            if args.json: print(json.dumps({"status": "success", "always_on_usb": state_bool}))
         else:
-            print("On" if svc.GetUsbCharging() else "Off")
+            state = bool(svc.GetUsbCharging())
+            if args.json: print(json.dumps({"always_on_usb": state}))
+            else: print("On" if state else "Off")
 
     elif args.command == "fnlock":
         if args.state:
-            svc.SetFnLock(args.state == "on")
+            state_bool = args.state == "on"
+            svc.SetFnLock(state_bool)
+            if args.json: print(json.dumps({"status": "success", "fn_lock": state_bool}))
         else:
-            print("On" if svc.GetFnLock() else "Off")
+            state = bool(svc.GetFnLock())
+            if args.json: print(json.dumps({"fn_lock": state}))
+            else: print("On" if state else "Off")
 
     elif args.command == "gpu":
         if args.mode:
             try:
                 svc.SetDgpuMode(args.mode)
+                if args.json: print(json.dumps({"status": "success", "gpu_mode": args.mode}))
             except Exception as e:
-                print(f"Failed to toggle dGPU mode: {e}")
+                if args.json: print(json.dumps({"status": "error", "message": str(e)}))
+                else: print(f"Failed to toggle dGPU mode: {e}")
         else:
-            print(svc.GetDgpuMode().capitalize())
+            mode = str(svc.GetDgpuMode())
+            if args.json: print(json.dumps({"gpu_mode": mode}))
+            else: print(mode.capitalize())
 
     elif args.command == "tdp":
         success = svc.SetRyzenTdp(args.stapm, args.fast, args.slow)
-        if success:
-            print("TDP limits applied successfully.")
+        if args.json:
+            print(json.dumps({"status": "success" if success else "error"}))
         else:
-            print("Failed to apply TDP limits. Is ryzenadj installed?", file=sys.stderr)
+            if success:
+                print("TDP limits applied successfully.")
+            else:
+                print("Failed to apply TDP limits. Is ryzenadj installed?", file=sys.stderr)
 
     elif args.command == "sensors":
-        sensors = svc.GetSensors()
-        print(f"CPU Temp:  {sensors.get('cpu_temp', 0):.1f}°C")
-        print(f"CPU Usage: {sensors.get('cpu_usage', 0):.1f}%")
-        print(f"GPU Temp:  {sensors.get('gpu_temp', 0):.1f}°C")
-        print(f"GPU Usage: {sensors.get('gpu_usage', 0):.1f}%")
-        print(f"Fan RPM:   {sensors.get('fan_rpm', 0)}")
-        print(f"Battery:   {sensors.get('bat_capacity', 0)}% ({sensors.get('bat_status', 'Unknown')})")
+        raw_sensors = svc.GetSensors()
+        sensors = dbus_to_py(raw_sensors)
+        if args.json:
+            print(json.dumps(sensors, indent=2))
+        else:
+            print(f"{'CPU Temp:':<12} {sensors.get('cpu_temp', 0):.1f}°C")
+            print(f"{'CPU Usage:':<12} {sensors.get('cpu_usage', 0):.1f}%")
+            print(f"{'GPU Temp:':<12} {sensors.get('gpu_temp', 0):.1f}°C")
+            print(f"{'GPU Usage:':<12} {sensors.get('gpu_usage', 0):.1f}%")
+            print(f"{'Fan RPM:':<12} {sensors.get('fan_rpm', 0)}")
+            print(f"{'Battery:':<12} {sensors.get('bat_capacity', 0)}% ({sensors.get('bat_status', 'Unknown')})")
 
     elif args.command == "rgb":
         svc.SetRgbMode(args.mode, args.color)
+        if args.json: print(json.dumps({"status": "success"}))
 
     elif args.command == "automation":
         if args.power or args.gpu:
@@ -140,24 +189,38 @@ def main():
             if args.power: rule["power_mode"] = args.power
             if args.gpu: rule["gpu_mode"] = args.gpu
             svc.SetAutomationRule(args.event, dbus.Dictionary(rule, signature='ss'))
-            print(f"Set rule {args.event} -> {rule}")
+            if args.json: print(json.dumps({"status": "success", "event": args.event, "rule": rule}))
+            else: print(f"Set rule {args.event} -> {rule}")
         else:
-            rule = svc.GetAutomationRule(args.event)
-            print(f"{args.event}: {dict(rule)}")
+            raw_rule = svc.GetAutomationRule(args.event)
+            rule = dbus_to_py(raw_rule)
+            if args.json: print(json.dumps({args.event: rule}))
+            else: print(f"{args.event}: {rule}")
 
     elif args.command == "overclock":
         if svc.SetGpuClocks(args.core, args.mem):
-            print("GPU Overclock applied successfully.")
+            if args.json: print(json.dumps({"status": "success"}))
+            else: print("GPU Overclock applied successfully.")
         else:
-            print("Failed to apply GPU Overclock. Is nvidia-settings installed and Coolbits enabled?", file=sys.stderr)
+            if args.json: print(json.dumps({"status": "error", "message": "Failed to apply GPU Overclock."}))
+            else: print("Failed to apply GPU Overclock. Is nvidia-settings installed and Coolbits enabled?", file=sys.stderr)
 
     elif args.command == "capabilities":
-        caps = svc.GetAllCapabilities()
-        for k, v in caps.items():
-            print(f"{k.capitalize()}:")
-            print(f"  Supported: {bool(v.get('supported', False))}")
-            print(f"  Partial:   {bool(v.get('partial', False))}")
-            print(f"  Reason:    {str(v.get('reason', ''))}")
+        raw_caps = svc.GetAllCapabilities()
+        caps = dbus_to_py(raw_caps)
+        if args.json:
+            print(json.dumps(caps, indent=2))
+        else:
+            for k, v in caps.items():
+                sup = bool(v.get('supported', False))
+                part = bool(v.get('partial', False))
+                reason = str(v.get('reason', ''))
+                mark = "[✓]" if sup else ("[~]" if part else "[✗]")
+                print(f"{mark} {k.capitalize()}:")
+                print(f"  Supported: {sup}")
+                print(f"  Partial:   {part}")
+                if reason:
+                    print(f"  Reason:    {reason}")
 
 if __name__ == "__main__":
     main()
